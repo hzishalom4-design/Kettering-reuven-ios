@@ -1,0 +1,48 @@
+workflows:
+  keter-reuven-ios:
+    name: Keter Reuven iOS App Store
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    integrations:
+      app_store_connect: keter-apple
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: il.co.keter-reuven.app
+      vars:
+        XCODE_WORKSPACE: "כתר ראובן.xcworkspace"
+        XCODE_SCHEME: "כתר ראובן"
+      xcode: latest
+
+    scripts:
+      - name: Unpack iOS project
+        script: |
+          rm -rf "$CM_BUILD_DIR/appsrc"
+          mkdir -p "$CM_BUILD_DIR/appsrc"
+          unzip -q "$CM_BUILD_DIR/Keter-Reuven-iOS-Source.zip" -d "$CM_BUILD_DIR/appsrc"
+
+      - name: Set up code signing
+        script: |
+          cd "$CM_BUILD_DIR/appsrc/src"
+          xcode-project use-profiles
+
+      - name: Build IPA for App Store
+        script: |
+          cd "$CM_BUILD_DIR/appsrc/src"
+          xcode-project build-ipa \
+            --workspace "$CM_BUILD_DIR/appsrc/src/$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - appsrc/src/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
