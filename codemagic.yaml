@@ -17,26 +17,26 @@ workflows:
       xcode: latest
 
     scripts:
-      - name: Unpack iOS project
+      - name: Unpack iOS source
         script: |
-          rm -rf "$CM_BUILD_DIR/appsrc"
-          mkdir -p "$CM_BUILD_DIR/appsrc"
-          unzip -q "$CM_BUILD_DIR/Keter-Reuven-iOS-Source.zip" -d "$CM_BUILD_DIR/appsrc"
+          cd "$CM_BUILD_DIR"
+          rm -rf src
+          unzip -o Keter-Reuven-iOS-Source.zip -d "$CM_BUILD_DIR"
 
       - name: Set up code signing
         script: |
-          cd "$CM_BUILD_DIR/appsrc/src"
+          cd "$CM_BUILD_DIR/src"
           xcode-project use-profiles
 
       - name: Build IPA for App Store
         script: |
-          cd "$CM_BUILD_DIR/appsrc/src"
+          cd "$CM_BUILD_DIR/src"
           xcode-project build-ipa \
-            --workspace "$CM_BUILD_DIR/appsrc/src/$XCODE_WORKSPACE" \
+            --workspace "$CM_BUILD_DIR/src/$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
 
     artifacts:
-      - appsrc/src/build/ios/ipa/*.ipa
+      - src/build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
