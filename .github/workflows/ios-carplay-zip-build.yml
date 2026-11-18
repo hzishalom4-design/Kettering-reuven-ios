@@ -1,0 +1,28 @@
+name: Keter Reuven iOS CarPlay
+
+on:
+  push:
+    branches: [feature/apple-carplay]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+
+      - name: Extract project
+        run: unzip -oq KeterReuven-iOS-CarPlay-Build5-CI.zip
+
+      - name: Build iOS
+        run: bash KeterReuven-iOS-CarPlay-Build5-CI/scripts/build-ios-simulator-macos.sh
+
+      - name: Save build
+        uses: actions/upload-artifact@v4
+        with:
+          name: KeterReuven-CarPlay-Simulator
+          path: KeterReuven-iOS-CarPlay-Build5-CI/out/KeterReuven-iOS-CarPlay-Simulator.app.zip
