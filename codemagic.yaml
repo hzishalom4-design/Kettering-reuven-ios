@@ -17,11 +17,16 @@ workflows:
       xcode: latest
 
     scripts:
-      - name: Unpack iOS source
+            - name: Unpack iOS source
         script: |
           cd "$CM_BUILD_DIR"
-          rm -rf src
-          unzip -o Keter-Reuven-iOS-Source.zip -d "$CM_BUILD_DIR"
+          rm -rf src KeterReuven-iOS-CarPlay-1012-DEV-SOURCE
+          unzip -oq KeterReuven-iOS-CarPlay-1012-DEV-SOURCE.zip -d "$CM_BUILD_DIR"
+          mv KeterReuven-iOS-CarPlay-1012-DEV-SOURCE/src src
+          sed -i '' \
+            -e 's/CURRENT_PROJECT_VERSION = 5;/CURRENT_PROJECT_VERSION = 6;/g' \
+            -e 's/MARKETING_VERSION = 1.1.0;/MARKETING_VERSION = 1.1.1;/g' \
+            src/*.xcodeproj/project.pbxproj
 
       - name: Set up code signing
         script: |
@@ -44,5 +49,5 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        submit_to_testflight: false
         submit_to_app_store: false
