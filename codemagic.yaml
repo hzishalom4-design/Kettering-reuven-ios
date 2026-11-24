@@ -17,24 +17,72 @@ workflows:
       xcode: latest
 
     scripts:
-            - name: Unpack iOS source
+      - name: Unpack and prepare iOS CarPlay 1012 source
         script: |
+          set -e
           cd "$CM_BUILD_DIR"
           rm -rf src KeterReuven-iOS-CarPlay-1012-DEV-SOURCE
-          unzip -oq KeterReuven-iOS-CarPlay-1012-DEV-SOURCE.zip -d "$CM_BUILD_DIR"
-          mv KeterReuven-iOS-CarPlay-1012-DEV-SOURCE/src src
-          sed -i '' \
-            -e 's/CURRENT_PROJECT_VERSION = 5;/CURRENT_PROJECT_VERSION = 6;/g' \
-            -e 's/MARKETING_VERSION = 1.1.0;/MARKETING_VERSION = 1.1.1;/g' \
-            src/*.xcodeproj/project.pbxproj
+          python3 - <<'PY'
+          import os
+          import re
+          import shutil
+          import zipfile
+          from pathlib import Path
+
+          root = Path(os.environ['CM_BUILD_DIR']).resolve()
+          archive = root / 'KeterReuven-iOS-CarPlay-1012-DEV-SOURCE.zip'
+          if not archive.is_file():
+              raise FileNotFoundError(f'Missing source archive: {archive}')
+
+          # Recover Hebrew filenames stored as UTF-8 bytes with a legacy ZIP flag.
+          with zipfile.ZipFile(archive) as zf:
+              for item in zf.infolist():
+                  try:
+                      name = item.filename.encode('cp437').decode('utf-8')
+                  except (UnicodeEncodeError, UnicodeDecodeError):
+                      name = item.filename
+                  target = (root / name).resolve()
+                  if not target.is_relative_to(root):
+                      raise ValueError(f'Unsafe archive path: {name}')
+                  if item.is_dir():
+                      target.mkdir(parents=True, exist_ok=True)
+                  else:
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      with zf.open(item) as source, target.open('wb') as output:
+                          shutil.copyfileobj(source, output)
+
+          extracted = root / 'KeterReuven-iOS-CarPlay-1012-DEV-SOURCE' / 'src'
+          if not extracted.is_dir():
+              raise FileNotFoundError(f'Missing src directory: {extracted}')
+          shutil.move(str(extracted), str(root / 'src'))
+
+          project = root / 'src' / 'כתר ראובן.xcodeproj' / 'project.pbxproj'
+          workspace = root / 'src' / 'כתר ראובן.xcworkspace'
+          if not project.is_file() or not workspace.is_dir():
+              raise FileNotFoundError('Missing expected Hebrew Xcode project/workspace')
+
+          config = project.read_text(encoding='utf-8')
+          config, build_replacements = re.subn(
+              r'CURRENT_PROJECT_VERSION\s*=\s*5;',
+              'CURRENT_PROJECT_VERSION = 6;', config)
+          config, version_replacements = re.subn(
+              r'MARKETING_VERSION\s*=\s*1\.1\.0;',
+              'MARKETING_VERSION = 1.1.1;', config)
+          if not build_replacements or not version_replacements:
+              raise ValueError('Expected Build 5 / version 1.1.0 values were not found')
+          project.write_text(config, encoding='utf-8')
+          print('Prepared Keter Reuven 1.1.1 (Build 6) from CarPlay 1012 source')
+          PY
 
       - name: Set up code signing
         script: |
+          set -e
           cd "$CM_BUILD_DIR/src"
           xcode-project use-profiles
 
       - name: Build IPA for App Store
         script: |
+          set -e
           cd "$CM_BUILD_DIR/src"
           xcode-project build-ipa \
             --workspace "$CM_BUILD_DIR/src/$XCODE_WORKSPACE" \
