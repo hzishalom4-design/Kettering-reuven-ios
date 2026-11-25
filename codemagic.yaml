@@ -9,8 +9,10 @@ workflows:
 
     environment:
       ios_signing:
-        distribution_type: app_store
-        bundle_identifier: il.co.keter-reuven.app
+        provisioning_profiles:
+          - keter-carplay-appstore
+        certificates:
+          - keter-distribution
       vars:
         XCODE_WORKSPACE: "כתר ראובן.xcworkspace"
         XCODE_SCHEME: "כתר ראובן"
@@ -64,14 +66,14 @@ workflows:
           config = project.read_text(encoding='utf-8')
           config, build_replacements = re.subn(
               r'CURRENT_PROJECT_VERSION\s*=\s*5;',
-              'CURRENT_PROJECT_VERSION = 6;', config)
+              'CURRENT_PROJECT_VERSION = 7;', config)
           config, version_replacements = re.subn(
               r'MARKETING_VERSION\s*=\s*1\.1\.0;',
-              'MARKETING_VERSION = 1.1.1;', config)
+              'MARKETING_VERSION = 1.1.2;', config)
           if not build_replacements or not version_replacements:
               raise ValueError('Expected Build 5 / version 1.1.0 values were not found')
           project.write_text(config, encoding='utf-8')
-          print('Prepared Keter Reuven 1.1.1 (Build 6) from CarPlay 1012 source')
+          print('Prepared Keter Reuven 1.1.2 (Build 7) from CarPlay 1012 source')
           PY
 
       - name: Set up code signing
@@ -80,6 +82,42 @@ workflows:
           cd "$CM_BUILD_DIR/src"
           xcode-project use-profiles
 
+      - name: Verify and prepare CarPlay signing entitlement
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR/src"
+          xcodebuild -workspace "$XCODE_WORKSPACE" -scheme "$XCODE_SCHEME" \
+            -configuration Release -sdk iphoneos -showBuildSettings -json > /tmp/keter-build-settings.json
+          python3 - <<'PY'
+          import json
+          import plistlib
+          from pathlib import Path
+
+          bundle_id = 'il.co.keter-reuven.app'
+          key = 'com.apple.developer.carplay-audio'
+          rows = json.loads(Path('/tmp/keter-build-settings.json').read_text())
+          matches = [row['buildSettings'] for row in rows
+                     if row.get('buildSettings', {}).get('PRODUCT_BUNDLE_IDENTIFIER') == bundle_id
+                     and row.get('buildSettings', {}).get('WRAPPER_EXTENSION') == 'app']
+          if len(matches) != 1:
+              raise SystemExit('Cannot uniquely identify the main iOS app target')
+          settings = matches[0]
+          raw = settings.get('CODE_SIGN_ENTITLEMENTS', '').strip().strip('"')
+          if not raw:
+              raise SystemExit('Main app Release target has no CODE_SIGN_ENTITLEMENTS setting')
+          root = Path(settings['SRCROOT']).resolve()
+          raw = raw.replace('$(SRCROOT)', str(root)).replace('${SRCROOT}', str(root))
+          raw = raw.replace('$(PROJECT_DIR)', settings['PROJECT_DIR']).replace('${PROJECT_DIR}', settings['PROJECT_DIR']) if 'PROJECT_DIR' in settings else raw
+          path = (root / raw).resolve()
+          if not path.is_file():
+              raise SystemExit(f'Entitlements file not found: {path}')
+          data = plistlib.loads(path.read_bytes())
+          if data.get(key) is not True:
+              data[key] = True
+              path.write_bytes(plistlib.dumps(data, sort_keys=False))
+          print(f'CarPlay Audio enabled in Release entitlements: {path.name}')
+          PY
+
       - name: Build IPA for App Store
         script: |
           set -e
@@ -87,6 +125,54 @@ workflows:
           xcode-project build-ipa \
             --workspace "$CM_BUILD_DIR/src/$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
+
+      - name: Verify signed IPA and CarPlay entitlement before upload
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import plistlib
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          key = 'com.apple.developer.carplay-audio'
+          bundle_id = 'il.co.keter-reuven.app'
+          app_id = '588LGD93TD.' + bundle_id
+          expected_profile = 'f58ce1f8-abfc-43c6-9b41-f7a9949654b0'
+          folder = Path(os.environ['CM_BUILD_DIR']) / 'src/build/ios/ipa'
+          ipas = list(folder.glob('*.ipa'))
+          if len(ipas) != 1:
+              raise SystemExit(f'Expected one IPA, found {len(ipas)}')
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          with tempfile.TemporaryDirectory() as directory:
+              subprocess.run(['/usr/bin/ditto', '-x', '-k', str(ipas[0]), directory], check=True)
+              apps = list((Path(directory) / 'Payload').glob('*.app'))
+              require(len(apps) == 1, 'Expected exactly one main app in IPA')
+              app = apps[0]
+              info = plistlib.loads((app / 'Info.plist').read_bytes())
+              require(info.get('CFBundleIdentifier') == bundle_id, 'Incorrect Bundle ID')
+              require(info.get('CFBundleShortVersionString') == '1.1.2', 'Incorrect app version')
+              require(str(info.get('CFBundleVersion')) == '7', 'Incorrect build number')
+              profile = plistlib.loads(subprocess.check_output([
+                  '/usr/bin/security', 'cms', '-D', '-i', str(app / 'embedded.mobileprovision')]))
+              permitted = profile['Entitlements']
+              require(profile.get('UUID', '').lower() == expected_profile, 'Incorrect provisioning profile UUID')
+              require(permitted.get('application-identifier') == app_id, 'Profile application ID mismatch')
+              require(permitted.get(key) is True, 'CarPlay missing from provisioning profile')
+              require(permitted.get('get-task-allow') is False, 'Not a distribution profile')
+              subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(app)], check=True)
+              signed = plistlib.loads(subprocess.check_output([
+                  '/usr/bin/codesign', '--display', '--entitlements', '-', '--xml', str(app)]))
+              require(signed.get('application-identifier') == app_id, 'Signed application ID mismatch')
+              require(signed.get(key) is True, 'CarPlay missing from signed app')
+              require(signed.get('aps-environment') == 'production', 'Production push entitlement missing')
+              print('PASS: Version 1.1.2 (7), correct distribution profile, signed CarPlay Audio and production push')
+          PY
 
     artifacts:
       - src/build/ios/ipa/*.ipa
